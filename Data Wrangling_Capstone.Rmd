@@ -1,0 +1,327 @@
+---
+title: "Data Wrangling"
+output: html_notebook
+---
+##Load Packages
+```{r}
+library(tidyverse)
+```
+
+##Load Data
+```{r}
+test <- read.csv("Data/test.csv", stringsAsFactors = FALSE)
+View(test)
+str(test)
+train <- read.csv("Data/train.csv", stringsAsFactors = FALSE)
+View(train)
+str(train)
+```
+
+##Sort & Find Missing Data
+```{r}
+head(sort(unique(train$SalePrice), decreasing = F))
+df.combined <- rbind(within(train, rm('Id', 'SalePrice')), within(test, rm('Id')))
+dim(df.combined)
+na.cols <- which(colSums(is.na(df.combined)) > 0)
+sort(colSums(sapply(df.combined[na.cols], is.na)), decreasing = TRUE)
+paste('There are', length(na.cols), 'columns with missing values')
+```
+
+##Function - Category Plotting
+```{r}
+plot.category <- function(cols, df){
+  for (col in cols) {
+    order.cols <- names(sort(table(df.combined[,col]), decreasing = TRUE))
+    
+    num.plot <- qplot(df[,col]) +
+      geom_bar(fill = 'cornflowerblue') +
+      geom_text(aes(label = ..count..), stat= 'count', vjust=-0.5) +
+      theme_minimal() +
+      scale_y_continuous(limits = c(0,max(table(df[,col]))*1.1)) +
+      scale_x_discrete(limits = order.cols) +
+      xlab(col) +
+      theme(axis.text.x = element_text(angle = 30, size=12))
+    
+    print(num.plot)
+  }
+}
+```
+
+##Missing vs. Null Example - Pool
+```{r}
+plot.category('PoolQC', df.combined)
+df.combined[(df.combined$PoolArea > 0) & is.na(df.combined$PoolQC), c('PoolQC', 'PoolArea')]
+
+df.combined[, c('PoolQC', 'PoolArea')] %>% 
+  group_by(PoolQC) %>% 
+  summarise(mean = mean(PoolArea), counts = n())
+
+df.combined[2421, 'PoolQC'] = 'Ex'
+df.combined[2504, 'PoolQC'] = 'Ex'
+df.combined[2600, 'PoolQC'] = 'Fa'
+df.combined$PoolQC[is.na(df.combined$PoolQC)] = 'None'
+```
+
+##Missing vs. Null - Garage
+```{r}
+length(which(df.combined$GarageYrBlt == df.combined$YearBuilt))
+length(which(is.na(df.combined$GarageYrBlt)))
+index <- which(is.na(df.combined$GarageYrBlt))
+df.combined[index, 'GarageYrBlt'] <- df.combined[index, 'YearBuilt']
+```
+
+##Merge Garage Variables
+```{r}
+garage.cols <- c('GarageArea', 'GarageCars', 'GarageQual', 'GarageFinish', 'GarageCond', 'GarageType')
+df.combined[is.na(df.combined$GarageCond), garage.cols]
+
+index <- which(((df.combined$GarageArea < 370) & (df.combined$GarageArea > 350) & (df.combined$GarageCars == 1)))
+
+names(sapply(df.combined[index, garage.cols], function(x) sort(table(x), decreasing=TRUE)[1]))
+```
+
+#Missing Garage Values
+```{r}
+for (col in garage.cols){
+  if (sapply(df.combined[col], is.numeric) == TRUE){
+    df.combined[sapply(df.combined[col], is.na), col] = 0
+  }
+  else{
+    df.combined[sapply(df.combined[col], is.na), col] = 'None'
+  }
+}
+
+plot.category('GarageQual', df.combined)
+```
+
+##Missing Kitchen Values
+```{r}
+plot.category('KitchenQual', df.combined)
+df.combined$KitchenQual[is.na(df.combined$KitchenQual)] = 'TA'
+```
+
+```{r}
+plot.category('Electrical', df.combined)
+df.combined[1380, 'Electrical'] = 'SBrkr'
+```
+
+```{r}
+bsmt.cols <- names(df.combined)[sapply(names(df.combined), function(x) str_detect(x, 'Bsmt'))]
+df.combined[is.na(df.combined$BsmtExposure), bsmt.cols]
+df.combined[c(949, 1488, 2349), 'BsmtExposure'] = 'No'
+```
+
+```{r}
+for (col in bsmt.cols){
+  if (sapply(df.combined[col], is.numeric) == TRUE){
+    df.combined[sapply(df.combined[col], is.na),col] = 0
+  }
+  else{
+    df.combined[sapply(df.combined[col],is.na),col] = 'None'
+  }
+}
+
+plot.category(bsmt.cols, df.combined)
+```
+
+```{r}
+plot.category(c('Exterior1st', 'Exterior2nd'), df.combined)
+index <- which(is.na(df.combined$Exterior1st) | is.na(df.combined$Exterior2nd))
+df.combined[index, c('Exterior1st', 'Exterior2nd')]
+df.combined$Exterior1st[is.na(df.combined$Exterior1st)] = 'Other'
+df.combined$Exterior2nd[is.na(df.combined$Exterior2nd)] = 'Other'
+```
+
+```{r}
+plot.category('SaleType', df.combined)
+df.combined$SaleType[is.na(df.combined$SaleType)] = 'WD'
+```
+
+```{r}
+plot.category('Utilities', df.combined)
+which(df.combined$Utilities == 'NoSeWa')
+col.drops <- c('Utilities')
+df.combined <- df.combined[,!names(df.combined) %in% c('Utilities')]
+```
+
+
+```{r}
+plot.category('MSZoning', df.combined)
+df.combined[is.na(df.combined$MSZoning), 'MSZoning']
+df.combined$MSZoning[c(2217, 2905)] = 'RL'
+df.combined$MSZoning[c(1916, 2251)] = 'RM'
+```
+
+```{r}
+plot.category(c('MasVnrType', 'MasVnrArea'), df.combined)
+index <- which(is.na(df.combined$MasVnrType) | is.na(df.combined$MasVnrArea))
+df.combined[index, c('MasVnrType', 'MasVnrArea')]
+df.combined[2611, 'MasVnrType'] = 'BrkFace'
+df.combined$MasVnrType[is.na(df.combined$MasVnrType)] = 'None'
+df.combined$MasVnrArea[is.na(df.combined$MasVnrArea)] = 0
+```
+
+```{r}
+plot.category('Neighborhood', df.combined)
+df.combined['Neighborhood.factor'] <- factor(df.combined$Neighborhood, levels = unique(df.combined$Neighborhood))
+
+lot.by.neighborhood <- df.combined[, c('Neighborhood', 'LotFrontage')] %>% 
+  group_by(Neighborhood) %>% 
+  summarise(median = median(LotFrontage, na.rm = TRUE))
+lot.by.neighborhood
+```
+
+```{r}
+index <- which(is.na(df.combined$LotFrontage))
+
+for (i in index){
+  lot.median <- lot.by.neighborhood[lot.by.neighborhood == df.combined$Neighborhood[i],'median']
+  df.combined[i,'LotFrontage'] <- lot.median[[1]]
+}
+```
+
+```{r}
+plot.category('Fence', df.combined)
+df.combined$Fence[is.na(df.combined$Fence)] = 'None'
+```
+
+```{r}
+plot.category('FireplaceQu', df.combined)
+df.combined$FireplaceQu[is.na(df.combined$FireplaceQu)] = 'None'
+```
+
+```{r}
+plot.category('Alley', df.combined)
+df.combined$Alley[is.na(df.combined$Alley)] = 'None'
+```
+
+```{r}
+paste('There are', sum(sapply(df.combined, is.na)), 'missing values left')
+```
+
+```{r}
+numeric.features <- names(which(sapply(df.combined, is.numeric)))
+categoric.features <- names(which(sapply(df.combined, is.character)))
+df.numeric <- df.combined[numeric.features]
+```
+
+```{r}
+group.df <- df.combined[1:1460,]
+group.df$SalePrice <- train$SalePrice
+```
+
+##Function - Group columns by features then returns median sales price for each unique feature
+```{r}
+group.prices <- function(col) {
+  group.table <- group.df[,c(col, 'SalePrice', 'OverallQual')] %>%
+    group_by_(col) %>%
+    summarise(mean.Quality = round(mean(OverallQual),2),
+              mean.Price = mean(SalePrice), n = n()) %>%
+    arrange(mean.Quality)
+  
+  print(qplot(x=reorder(group.table[[col]], -group.table[['mean.Price']]), y=group.table[['mean.Price']]) +
+          geom_bar(stat='identity', fill='cornflowerblue') +
+          theme_minimal() +
+          labs(x=col, y='Mean SalePrice') +
+          theme(axis.text.x = element_text(angle = 45)))
+  
+  return(data.frame(group.table))
+}
+```
+
+##Function - Total Mean for each Quality
+```{r}
+quality.mean <- function(col) {
+  group.table <- df.combined[,c(col, 'OverallQual')] %>%
+    group_by_(col) %>%
+    summarise(mean.qual = mean(OverallQual)) %>%
+    arrange(mean.qual)
+  
+  return(data.frame(group.table))
+}
+```
+
+##Function - Maps categoric values to numeric values and returns column to data frame
+```{r}
+map.category <- function(cols, map.list, df){
+  for (col in cols){
+    df[col] <- as.numeric(map.list[df.combined[,col]])
+  }
+  return(df)
+}
+```
+
+```{r}
+quality.cols <- c('ExterQual', 'ExterCond', 'GarageQual', 'GarageCond', 'FireplaceQu', 'KitchenQual', 'HeatingQC', 'BsmtQual')
+
+group.prices('FireplaceQu')
+quality.mean('FireplaceQu')
+
+quality.list <- c('None' = 0, 'Po' = 1, 'Fa' = 2, 'TA' = 3, 'Gd' = 4, 'Ex' = 5)
+df.numeric <- map.category(quality.cols, quality.list, df.numeric)
+```
+
+```{r}
+bsmt.list <- c('None' = 0, 'No' = 1, 'Mn' = 2, 'Av' = 3, 'Gd' = 4)
+df.numeric <- map.category(c('BsmtExposure'), bsmt.list, df.numeric)
+group.prices('BsmtFinType1')
+```
+
+```{r}
+df.combined[,c('BsmtFinType1', 'BsmtFinSF1')] %>%
+  group_by(BsmtFinType1) %>%
+  summarise(medianArea = median(BsmtFinSF1), counts = n()) %>%
+  arrange(medianArea) %>%
+  ggplot(aes(x=reorder(BsmtFinType1,-medianArea), y=medianArea)) +
+  geom_bar(stat = 'identity', fill='cornflowerblue') +
+  labs(x='BsmtFinType2', y='Median of BsmtFinSF2') +
+  geom_text(aes(label = sort(medianArea)), vjust = -0.5) +
+  scale_y_continuous(limits = c(0,850)) +
+  theme_minimal()
+```
+
+```{r}
+bsmt.finish.list <- c('None' = 0, 'Unf' = 1, 'LwQ' = 2,'Rec'= 3, 'BLQ' = 4, 'ALQ' = 5, 'GLQ' = 6)
+df.numeric <- map.category(c('BsmtFinType1', 'BsmtFinType2'), bsmt.finish.list, df.numeric)
+```
+
+```{r}
+group.prices('Functional')
+quality.mean('Functional')
+functional.list <- c('None' = 0, 'Sal' = 1, 'Sev' = 2, 'Maj2' = 3, 'Maj1' = 4, 'Mod' = 5, 'Min2' = 6, 'Min1' = 7, 'Typ'= 8)
+df.numeric['Functional'] <- as.numeric(functional.list[df.combined$Functional])
+```
+
+```{r}
+group.prices('GarageFinish')
+garage.finish.list <- c('None' = 0,'Unf' = 1, 'RFn' = 1, 'Fin' = 2)
+df.numeric['GarageFinish'] <- as.numeric(garage.finish.list[df.combined$GarageFinish])
+```
+
+```{r}
+group.prices('Fence')
+fence.list <- c('None' = 0, 'MnWw' = 1, 'GdWo' = 2, 'MnPrv' = 2, 'GdPrv' = 3)
+df.numeric['Fence'] <- as.numeric(fence.list[df.combined$Fence])
+```
+
+```{r}
+group.prices('MSSubClass')
+MSdwelling.list <- c('20' = 1, '30'= 0, '40' = 0, '45' = 0,'50' = 0, '60' = 1, '70' = 0, '75' = 0, '80' = 0, '85' = 0, '90' = 0, '120' = 1, '150' = 0, '160' = 0, '180' = 0, '190' = 0)
+df.numeric['NewerDwelling'] <- as.numeric(MSdwelling.list[as.character(df.combined$MSSubClass)])
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
