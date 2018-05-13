@@ -1,6 +1,10 @@
 ---
-title: "Capstone_Data Wrangling"
-output: html_notebook
+title: "Capstone Data Wrangling"
+output:
+  word_document: default
+  html_notebook: default
+  html_document:
+    df_print: paged
 ---
 
 ```{r}
@@ -722,3 +726,4 @@ categoric.Vars <- which(sapply(df.combined, is.factor))
 cat(length(numeric.Vars), 'numeric variables &', length(categoric.Vars), 'categoric variables')
 
 str(df.combined)
+```
