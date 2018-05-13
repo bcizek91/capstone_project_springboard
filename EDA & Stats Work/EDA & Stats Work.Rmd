@@ -1,0 +1,167 @@
+---
+title: "EDA & Stats Work"
+output: html_notebook
+---
+
+```{r}
+##Level Set High Correlations
+df.numeric.Vars <- df.combined[, numeric.Vars]
+correlation.numeric.Vars <- cor(df.numeric.Vars, use = "pairwise.complete.obs")
+correlation.sorted <- as.matrix(sort(correlation.numeric.Vars[, 'SalePrice'], decreasing = TRUE))
+
+correlation.high <- names(which(apply(correlation.sorted, 1, function(x) abs(x) > 0.5)))
+correlation.numeric.Vars <- correlation.numeric.Vars[correlation.high, correlation.high]
+
+corrplot.mixed(correlation.numeric.Vars, tl.col = "black", tl.pos = "lt", tl.cex = 0.7, cl.cex = 0.7, number.cex = 0.7)
+```
+
+```{r}
+##Quick RandomForest to Identify Most Important Variables(Numeric & Categorical)
+set.seed(2018)
+RandomForest.draft <- randomForest(x = df.combined[1:1460, -79], y = df.combined$SalePrice[1:1460], ntree = 100, importance = TRUE)
+RandomForest.important <- importance(RandomForest.draft)
+df.important <- data.frame(Variables = row.names(RandomForest.important), MSE = RandomForest.important[, 1])
+df.important <- df.important[order(df.important$MSE, decreasing = TRUE),]
+
+##Visualize Quick RandomForest (df.important)
+ggplot(df.important[1:30,], aes(x = reorder(Variables, MSE), y = MSE, fill = MSE)) +
+          geom_bar(stat = 'identity') +
+          labs(x = 'Variables', y = '% Increase') +
+          coord_flip() +
+          theme(legend.position = "none")
+```
+
+```{r}
+##EDA of GrLivArea & Surface Related Variables
+s1 <- ggplot(data = df.combined, aes(x = GrLivArea)) +
+        geom_density() + labs(x = 'SqFt Living Area')
+s2 <- ggplot(data = df.combined, aes(x = as.factor(TotRmsAbvGrd))) +
+        geom_histogram(stat = 'count') + labs(x = 'Rooms above Ground')
+s3 <- ggplot(data = df.combined, aes(x = X1stFlrSF)) +
+        geom_density() + labs(x = 'SqFt 1st Floor')
+s4 <- ggplot(data = df.combined, aes(x = X2ndFlrSF)) +
+        geom_density() + labs(x='SqFt 2nd floor')
+s5 <- ggplot(data = df.combined, aes(x = TotalBsmtSF)) +
+        geom_density() + labs(x = 'SqFt Basement')
+s6 <- ggplot(data = df.combined[df.combined$LotArea < 100000,], aes(x=LotArea)) +
+        geom_density() + labs(x = 'SqFt Lot')
+s7 <- ggplot(data = df.combined, aes(x=LotFrontage)) +
+        geom_density() + labs(x = 'Linear Ft Lot Frontage')
+s8 <- ggplot(data = df.combined, aes(x = LowQualFinSF)) +
+        geom_histogram() + labs(x = 'Low Quality SqFt 1st & 2nd')
+
+d.layout <- matrix(c(1, 2, 5, 3, 4, 8, 6, 7), 4, 2, byrow=TRUE)
+multiplot(s1, s2, s3, s4, s5, s6, s7, s8, layout = d.layout)
+
+##Investigating Correlation between GrLivArea to X1stFlrSF, X2ndFlrSF & LowQualFinSF
+cor(df.combined$GrLivArea, (df.combined$X1stFlrSF + df.combined$X2ndFlrSF + df.combined$LowQualFinSF))
+head(df.combined[df.combined$LowQualFinSF > 0, c('GrLivArea', 'X1stFlrSF', 'X2ndFlrSF', 'LowQualFinSF')])
+```
+
+```{r}
+##EDA of Neighborhood Variable
+n1 <-ggplot(df.combined[!is.na(df.combined$SalePrice), ], aes(x = Neighborhood, y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 50000), labels = scales::comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size  = 3) +
+        geom_hline(yintercept = 163000, linetype = "dashed", color = "red")
+
+n2 <- ggplot(data = df.combined, aes(x = Neighborhood)) +
+        geom_histogram(stat = 'count') +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(n1, n2)
+```
+
+```{r}
+##EDA of OverallQuall & Quality Variables
+q1 <- ggplot(data = df.combined, aes(x = as.factor(OverallQual))) +
+        geom_histogram(stat = 'count')
+q2 <- ggplot(data = df.combined, aes(x=as.factor(ExterQual))) +
+        geom_histogram(stat='count')
+q3 <- ggplot(data = df.combined, aes(x=as.factor(BsmtQual))) +
+        geom_histogram(stat='count')
+q4 <- ggplot(data = df.combined, aes(x=as.factor(KitchenQual))) +
+        geom_histogram(stat='count')
+q5 <- ggplot(data = df.combined, aes(x=as.factor(GarageQual))) +
+        geom_histogram(stat='count')
+q6 <- ggplot(data = df.combined, aes(x=as.factor(FireplaceQu))) +
+        geom_histogram(stat='count')
+q7 <- ggplot(data = df.combined, aes(x=as.factor(PoolQC))) +
+        geom_histogram(stat='count')
+
+layout <- matrix(c(1,2,8,3,4,8,5,6,7),3,3,byrow=TRUE)
+multiplot(q1, q2, q3, q4, q5, q6, q7, layout=layout)
+```
+
+```{r}
+##EDA of MSSubCLass
+ms1 <- ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = MSSubClass, y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by=50000), labels = comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        geom_hline(yintercept = 163000, linetype = "dashed", color = "red") 
+
+ms2 <- ggplot(data = df.combined, aes(x = MSSubClass)) +
+        geom_histogram(stat = 'count') +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(ms1, ms2)
+```
+
+```{r}
+##EDA of Garage Variables
+g1 <- ggplot(data = df.combined[df.combined$GarageCars !=0,], aes(x = GarageYrBlt)) + 
+        geom_histogram() + 
+        xlim(1890, 2015)
+g2 <- ggplot(data = df.combined, aes(x = as.factor(GarageCars))) +
+        geom_histogram(stat = 'count')
+g3 <- ggplot(data = df.combined, aes(x = GarageArea)) +
+        geom_density()
+g4 <- ggplot(data = df.combined, aes(x = as.factor(GarageCond))) +
+        geom_histogram(stat = 'count')
+g5 <- ggplot(data = df.combined, aes(x = GarageType)) +
+        geom_histogram(stat = 'count')
+g6 <- ggplot(data = df.combined, aes(x = as.factor(GarageQual))) +
+        geom_histogram(stat = 'count')
+g7 <- ggplot(data = df.combined, aes(x = as.factor(GarageFinish))) +
+        geom_histogram(stat = 'count')
+
+layout <- matrix(c(1, 5, 5, 2, 3, 8, 6, 4, 7), 3 , 3, byrow = TRUE)
+multiplot(g1, g2, g3, g4, g5, g6, g7, layout = layout)
+```
+
+```{r}
+##EDA of Basement Variables
+b1 <- ggplot(data = df.combined, aes(BsmtFinSF1)) + 
+        geom_histogram() +
+        labs(x = 'Type 1 Finished SqFt')
+b2 <- ggplot(data = df.combined, aes(x = BsmtFinSF2)) +
+        geom_histogram() +
+        labs(x = 'Type 2 Finished SqFt')
+b3 <- ggplot(data = df.combined, aes(x = BsmtUnfSF)) + 
+        geom_histogram() + 
+        labs(x = 'Unfinished SqFt')
+b4 <- ggplot(data = df.combined, aes(x = as.factor(BsmtFinType1))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Type 1 Finished Area Rating')
+b5 <- ggplot(data = df.combined, aes(x = as.factor(BsmtFinType2))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Type 2 Finished Area Rating')
+b6 <- ggplot(data = df.combined, aes(x = as.factor(BsmtQual))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Height of Bsmt')
+b7 <- ggplot(data = df.combined, aes(x = as.factor(BsmtCond))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Bsmt Condition Rating')
+b8 <- ggplot(data = df.combined, aes(x = as.factor(BsmtExposure))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Walkout/Garden Level Walls')
+
+layout <- matrix(c(1, 2, 3, 4, 5, 9, 6, 7, 8), 3, 3, byrow = TRUE)
+multiplot(b1, b2, b3, b4, b5, b6, b7, b8, layout = layout)
+```
