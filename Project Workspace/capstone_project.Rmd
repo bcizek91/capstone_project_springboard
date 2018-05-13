@@ -1,0 +1,1139 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(knitr)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(randomForest)
+library(psych)
+library(xgboost)
+```
+
+```{r}
+test <- read.csv("Data/test.csv", stringsAsFactors = FALSE)
+View(test)
+str(test)
+train <- read.csv("Data/train.csv", stringsAsFactors = FALSE)
+View(train)
+str(train)
+```
+
+```{r}
+##Combine Train & Test into singular dataframe by dropping ID column
+test.IDs <- test$Id
+test$Id <- NULL
+train$Id <- NULL
+
+test$SalePrice <- NA
+df.combined <- rbind(train, test)
+str(df.combined)
+```
+
+```{r}
+##Visualize distribution of SalePrice Values
+summary(df.combined$SalePrice)
+
+ggplot(data = df.combined[!is.na(df.combined$SalePrice),], aes(x = SalePrice)) +
+        geom_histogram(fill = "blue", binwidth = 10000) +
+        scale_x_continuous(breaks = seq(0, 800000, by = 100000), labels = scales::comma)
+```
+
+```{r}
+##Index Vector of Numeric Variables
+numeric.Vars <- which(sapply(df.combined, is.numeric)) 
+##Names Vector of Numeric Variables
+numeric.VarNames <- names(numeric.Vars)
+
+cat(length(numeric.Vars), 'numeric variables')
+```
+
+```{r}
+##Dataframe of Numeric Variables
+df.numeric.Vars <- df.combined[, numeric.Vars]
+##Correlation of Numeric Variables
+correlation.numeric.Vars <- cor(df.numeric.Vars, use = "pairwise.complete.obs")
+##Sort on decreasing correlations by SalePrice
+correlation.sorted <- as.matrix(sort(correlation.numeric.Vars[, 'SalePrice'], decreasing = TRUE))
+##Select High Correlations
+correlation.high <- names(which(apply(correlation.sorted, 1, function(x) abs(x) > 0.5)))
+correlation.numeric.Vars <- correlation.numeric.Vars[correlation.high, correlation.high]
+##Correlation Plot
+corrplot.mixed(correlation.numeric.Vars, tl.col="black", tl.pos = "lt")
+```
+
+```{r}
+##SalePrice vs. Overall Quality (Highest Correlation to SalePrice)
+ggplot(data = df.combined[!is.na(df.combined$SalePrice),], aes(x = factor(OverallQual), y = SalePrice))+
+        geom_boxplot() + labs(x = 'Overall Quality') +
+        scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = scales::comma)
+```
+
+```{r}
+##SalePrice vs. GrLivArea (2nd Highest Correlation to SalePrice)
+ggplot(data = df.combined[!is.na(df.combined$SalePrice),], aes(x = GrLivArea, y = SalePrice)) +
+        geom_point(col = 'blue') + geom_smooth(method = "lm", se = FALSE, color = "black", aes(group = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = scales::comma) +
+        geom_text_repel(aes(label = ifelse(df.combined$GrLivArea[!is.na(df.combined$SalePrice)] > 4500, rownames(df.combined), '')))
+
+##Low SalePrice, High Quality Outliers
+df.combined[c(524, 1299), c('SalePrice', 'GrLivArea', 'OverallQual')]
+```
+
+```{r}
+##Variables with Missing Values
+NAcol <- which(colSums(is.na(df.combined)) > 0)
+sort(colSums(sapply(df.combined[NAcol], is.na)), decreasing = TRUE)
+
+cat(length(NAcol), 'variables with missing values')
+```
+
+```{r}
+##Imputing Missing Pool Values
+unique(df.combined$PoolQC)
+
+df.combined$PoolQC[is.na(df.combined$PoolQC)] <- 'None'
+
+##Quality Level Vector
+Qualities <- c('None' = 0, 'Po' = 1, 'Fa' = 2, 'TA' = 3, 'Gd' = 4, 'Ex' = 5)
+
+##Impute PoolQC with Quality Level Vector
+df.combined$PoolQC <- as.integer(revalue(df.combined$PoolQC, Qualities))
+table(df.combined$PoolQC)
+##Verify 3 values without PoolQC
+df.combined[df.combined$PoolArea > 0 & df.combined$PoolQC == 0, c('PoolArea', 'PoolQC', 'OverallQual')]
+##Impute 3 values without PoolQC with OverallQual
+df.combined$PoolQC[2421] <- 2
+df.combined$PoolQC[2504] <- 3
+df.combined$PoolQC[2600] <- 2
+```
+
+```{r}
+##Imputing Missing MiscFeature Values
+unique(df.combined$MiscFeature)
+
+df.combined$MiscFeature[is.na(df.combined$MiscFeature)] <- 'None'
+df.combined$MiscFeature <- as.factor(df.combined$MiscFeature)
+
+ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = MiscFeature, y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = scales::comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..))
+
+table(df.combined$MiscFeature)
+```
+
+```{r}
+##Imputing Missing Alley Values
+unique(df.combined$Alley)
+
+df.combined$Alley[is.na(df.combined$Alley)] <- 'None'
+df.combined$Alley <- as.factor(df.combined$Alley)
+table(df.combined$Alley)
+
+ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = Alley, y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue')+
+        scale_y_continuous(breaks = seq(0, 200000, by = 50000), labels = scales::comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..))
+```
+
+```{r}
+##Imputing Missing Fence Values
+unique(df.combined$Fence)
+
+df.combined$Fence[is.na(df.combined$Fence)] <- 'None'
+table(df.combined$Fence)
+
+df.combined[!is.na(df.combined$SalePrice),] %>% 
+  group_by(Fence) %>% 
+  summarise(median = median(SalePrice), counts=n())
+
+df.combined$Fence <- as.factor(df.combined$Fence)
+```
+
+```{r}
+##Imputing Missing Fireplace Values
+
+##FireplaceQu
+unique(df.combined$FireplaceQu)
+
+df.combined$FireplaceQu[is.na(df.combined$FireplaceQu)] <- 'None'
+df.combined$FireplaceQu <- as.integer(revalue(df.combined$FireplaceQu, Qualities))
+table(df.combined$FireplaceQu)
+
+##Fireplaces
+unique(df.combined$Fireplaces)
+table(df.combined$Fireplaces)
+sum(table(df.combined$Fireplaces))
+```
+
+```{r}
+##Imputing Missing Lot Values
+
+##LotFrontage
+unique(df.combined$LotFrontage)
+table(is.na(df.combined$LotFrontage))
+
+ggplot(df.combined[!is.na(df.combined$LotFrontage),], aes(x = as.factor(Neighborhood), y = LotFrontage)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+for (i in 1:nrow(df.combined)){
+        if(is.na(df.combined$LotFrontage[i])){
+               df.combined$LotFrontage[i] <- as.integer(median(df.combined$LotFrontage[df.combined$Neighborhood == df.combined$Neighborhood[i]], na.rm = TRUE)) 
+        }
+}
+
+##LotShape
+unique(df.combined$LotShape)
+
+df.combined$LotShape <- as.integer(revalue(df.combined$LotShape, c('IR3' = 0, 'IR2' = 1, 'IR1' = 2, 'Reg'= 3)))
+table(df.combined$LotShape)
+sum(table(df.combined$LotShape))
+
+##LotConfig
+unique(df.combined$LotConfig)
+
+ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = as.factor(LotConfig), y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue')+
+        scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = scales::comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..))
+
+df.combined$LotConfig <- as.factor(df.combined$LotConfig)
+table(df.combined$LotConfig)
+sum(table(df.combined$LotConfig))
+```
+
+```{r}
+##Imputing Missing Garage Values
+unique(df.combined$GarageYrBlt)
+table(is.na(df.combined$GarageYrBlt))
+
+##159 NA's - Replacing GarageYrBlt with YearBuilt
+df.combined$GarageYrBlt[is.na(df.combined$GarageYrBlt)] <- df.combined$YearBuilt[is.na(df.combined$GarageYrBlt)]
+
+##157 NA's imputed - 2 have Garage Values but are NA
+length(which(is.na(df.combined$GarageType) & is.na(df.combined$GarageFinish) & is.na(df.combined$GarageCond) & is.na(df.combined$GarageQual)))
+
+##Identify and validate 2 NA's with Garage Values
+kable(df.combined[!is.na(df.combined$GarageType) & is.na(df.combined$GarageFinish), c('GarageCars', 'GarageArea', 'GarageType', 'GarageCond', 'GarageQual', 'GarageFinish')])
+
+##Imputing House #2127 Missing Garage Values with modes
+df.combined$GarageCond[2127] <- names(sort(-table(df.combined$GarageCond)))[1]
+df.combined$GarageQual[2127] <- names(sort(-table(df.combined$GarageQual)))[1]
+df.combined$GarageFinish[2127] <- names(sort(-table(df.combined$GarageFinish)))[1]
+
+##Check House #2127
+kable(df.combined[2127, c('GarageYrBlt', 'GarageCars', 'GarageArea', 'GarageType', 'GarageCond', 'GarageQual', 'GarageFinish')])
+
+##Fix values for House ##2577
+df.combined$GarageCars[2577] <- 0
+df.combined$GarageArea[2577] <- 0
+df.combined$GarageType[2577] <- NA
+
+##Check House #2577
+kable(df.combined[2577, c('GarageYrBlt', 'GarageCars', 'GarageArea', 'GarageType', 'GarageCond', 'GarageQual', 'GarageFinish')])
+
+##Verify that there are 158 homes without garages
+length(which(is.na(df.combined$GarageType) & is.na(df.combined$GarageFinish) & is.na(df.combined$GarageCond) & is.na(df.combined$GarageQual)))
+
+##Imputing Missing GarageType Values
+unique(df.combined$GarageType)
+df.combined$GarageType[is.na(df.combined$GarageType)] <- 'No Garage'
+df.combined$GarageType <- as.factor(df.combined$GarageType)
+table(df.combined$GarageType)
+
+##Imputing Missing GarageFinish Values
+unique(df.combined$GarageFinish)
+df.combined$GarageFinish[is.na(df.combined$GarageFinish)] <- 'None'
+
+##Finish Level Vector
+Finish <- c('None' = 0, 'Unf' = 1, 'RFn' = 2, 'Fin' = 3)
+
+df.combined$GarageFinish <- as.integer(revalue(df.combined$GarageFinish, Finish))
+table(df.combined$GarageFinish)
+
+##Imputing Missing GarageQual Values
+unique(df.combined$GarageQual)
+df.combined$GarageQual[is.na(df.combined$GarageQual)] <- 'None'
+df.combined$GarageQual <- as.integer(revalue(df.combined$GarageQual, Qualities))
+table(df.combined$GarageQual)
+
+##Imputing Missing GarageCond Values
+unique(df.combined$GarageCond)
+df.combined$GarageCond[is.na(df.combined$GarageCond)] <- 'None'
+df.combined$GarageCond<-as.integer(revalue(df.combined$GarageCond, Qualities))
+table(df.combined$GarageCond)
+```
+
+```{r}
+##Imputing Missing Basement Values
+unique(df.combined$BsmtQual)
+table(is.na(df.combined$BsmtQual))
+
+##Verifying set of 79 NA obserations
+length(which(is.na(df.combined$BsmtQual) & is.na(df.combined$BsmtCond) & is.na(df.combined$BsmtExposure) & is.na(df.combined$BsmtFinType1) & is.na(df.combined$BsmtFinType2)))
+
+##Find overlaps of NA's between Basement Variables 
+df.combined[!is.na(df.combined$BsmtFinType1) & (is.na(df.combined$BsmtCond)|is.na(df.combined$BsmtQual)|is.na(df.combined$BsmtExposure)|is.na(df.combined$BsmtFinType2)), c('BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 'BsmtFinType2')]
+
+##Imputing Modes of Bsmt Values
+df.combined$BsmtFinType2[333] <- names(sort(-table(df.combined$BsmtFinType2)))[1]
+df.combined$BsmtExposure[c(949, 1488, 2349)] <- names(sort(-table(df.combined$BsmtExposure)))[1]
+df.combined$BsmtCond[c(2041, 2186, 2525)] <- names(sort(-table(df.combined$BsmtCond)))[1]
+df.combined$BsmtQual[c(2218, 2219)] <- names(sort(-table(df.combined$BsmtQual)))[1]
+
+##Imputing Missing BsmtQual Values
+df.combined$BsmtQual[is.na(df.combined$BsmtQual)] <- 'None'
+df.combined$BsmtQual <- as.integer(revalue(df.combined$BsmtQual, Qualities))
+table(df.combined$BsmtQual)
+
+##Imputing Missing BsmtCond Values
+unique(df.combined$BsmtCond)
+df.combined$BsmtCond[is.na(df.combined$BsmtCond)] <- 'None'
+df.combined$BsmtCond <- as.integer(revalue(df.combined$BsmtCond, Qualities))
+table(df.combined$BsmtCond)
+
+##Imputing Missing BsmtExposure Values
+unique(df.combined$BsmtExposure)
+
+##Exposure Levels Vector
+Exposure <- c('None' = 0, 'No' = 1, 'Mn' = 2, 'Av' = 3, 'Gd' = 4)
+
+df.combined$BsmtExposure[is.na(df.combined$BsmtExposure)] <- 'None'
+df.combined$BsmtExposure <- as.integer(revalue(df.combined$BsmtExposure, Exposure))
+table(df.combined$BsmtExposure)
+
+##Imputing Missing BsmtFinType1 Values
+unique(df.combined$BsmtFinType1)
+
+##FinType Levels Vector
+FinType <- c('None'=0, 'Unf'=1, 'LwQ'=2, 'Rec'=3, 'BLQ'=4, 'ALQ'=5, 'GLQ'=6)
+
+df.combined$BsmtFinType1[is.na(df.combined$BsmtFinType1)] <- 'None'
+df.combined$BsmtFinType1<-as.integer(revalue(df.combined$BsmtFinType1, FinType))
+table(df.combined$BsmtFinType1)
+
+##Imputing BsmtFinType2 Values
+unique(df.combined$BsmtFinType2)
+
+df.combined$BsmtFinType2[is.na(df.combined$BsmtFinType2)] <- 'None'
+df.combined$BsmtFinType2 <- as.integer(revalue(df.combined$BsmtFinType2, FinType))
+table(df.combined$BsmtFinType2)
+
+##Identify remaining NA's for Bsmt Values
+df.combined[(is.na(df.combined$BsmtFullBath)|is.na(df.combined$BsmtHalfBath)|is.na(df.combined$BsmtFinSF1)|is.na(df.combined$BsmtFinSF2)|is.na(df.combined$BsmtUnfSF)|is.na(df.combined$TotalBsmtSF)), c('BsmtQual', 'BsmtFullBath', 'BsmtHalfBath', 'BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF', 'TotalBsmtSF')]
+
+#Imputing Missing BsmtFullBath Values
+unique(df.combined$BsmtFullBath)
+df.combined$BsmtFullBath[is.na(df.combined$BsmtFullBath)] <- 0
+table(df.combined$BsmtFullBath)
+
+##Imputing Missing BsmtHalfBath Values
+unique(df.combined$BsmtHalfBath)
+df.combined$BsmtHalfBath[is.na(df.combined$BsmtHalfBath)] <- 0
+table(df.combined$BsmtHalfBath)
+
+##Imputing Missing BsmtFinSF1 Values
+unique(df.combined$BsmtFinSF1)
+df.combined$BsmtFinSF1[is.na(df.combined$BsmtFinSF1)] <- 0
+table(is.na(df.combined$BsmtFinSF1))
+
+##Imputing Missing BsmtFinSF2 Values
+unique(df.combined$BsmtFinSF2)
+df.combined$BsmtFinSF2[is.na(df.combined$BsmtFinSF2)] <- 0
+table(is.na(df.combined$BsmtFinSF2))
+
+##Imputing Missing BsmtUnfSF Values
+unique(df.combined$BsmtUnfSF)
+df.combined$BsmtUnfSF[is.na(df.combined$BsmtUnfSF)] <- 0
+table(is.na(df.combined$BsmtUnfSF))
+
+##Imputing Missing TotalBsmtSF Values
+unique(df.combined$TotalBsmtSF)
+df.combined$TotalBsmtSF[is.na(df.combined$TotalBsmtSF)] <- 0
+table(is.na(df.combined$TotalBsmtSF))
+```
+
+```{r}
+##Imputing Missing Masonry Values
+length(which(is.na(df.combined$MasVnrType) & is.na(df.combined$MasVnrArea)))
+##Find Missing MasVrnType
+df.combined[is.na(df.combined$MasVnrType) & !is.na(df.combined$MasVnrArea), c('MasVnrType', 'MasVnrArea')] 
+##Impute #2611 Missing MasVrnType with the mode
+df.combined$MasVnrType[2611] <- names(sort(-table(df.combined$MasVnrType)))[2]
+df.combined[2611, c('MasVnrType', 'MasVnrArea')]
+
+##Impute Missing MasVnrType Values
+unique(df.combined$MasVnrType)
+df.combined$MasVnrType[is.na(df.combined$MasVnrType)] <- 'None'
+table(is.na(df.combined$MasVnrType))
+
+##MasVnrType by Median SalePrice
+df.combined[!is.na(df.combined$SalePrice),] %>% 
+      group_by(MasVnrType) %>% 
+      summarise(median = median(SalePrice), counts = n()) %>% 
+      arrange(median)
+
+##Masonry Levels Vector
+Masonry <- c('None' = 0, 'BrkCmn' = 0, 'BrkFace' = 1, 'Stone' = 2)
+
+df.combined$MasVnrType <- as.integer(revalue(df.combined$MasVnrType, Masonry))
+table(df.combined$MasVnrType)
+
+##Imputing Missing MasVnrArea Values
+unique(df.combined$MasVnrArea)
+df.combined$MasVnrArea[is.na(df.combined$MasVnrArea)] <- 0
+table(is.na(df.combined$MasVnrArea))
+```
+
+```{r}
+##Imputing Missing MSZoning Values
+unique(df.combined$MSZoning)
+table(is.na(df.combined$MSZoning))
+
+##Imputing Mode of MSZoning Values
+df.combined$MSZoning[is.na(df.combined$MSZoning)] <- names(sort(-table(df.combined$MSZoning)))[1]
+df.combined$MSZoning <- as.factor(df.combined$MSZoning)
+
+table(df.combined$MSZoning)
+sum(table(df.combined$MSZoning))
+```
+
+```{r}
+##Imputing Missing Kitchen Values
+unique(df.combined$KitchenQual)
+table(is.na(df.combined$KitchenQual))
+
+
+##Imputing mode of KitchenQual Values
+df.combined$KitchenQual[is.na(df.combined$KitchenQual)]
+df.combined$KitchenQual[is.na(df.combined$KitchenQual)] <- names(sort(-table(df.combined$KitchenQual)))[1]
+df.combined$KitchenQual<-as.integer(revalue(df.combined$KitchenQual, Qualities))
+
+table(df.combined$KitchenQual)
+sum(table(df.combined$KitchenQual))
+
+##Verifying KitchenAbvGr Values
+unique(df.combined$KitchenAbvGr)
+table(is.na(df.combined$KitchenAbvGr))
+table(df.combined$KitchenAbvGr)
+sum(table(df.combined$KitchenAbvGr))
+```
+
+```{r}
+##Imputing Missing Utilities Values
+unique(df.combined$Utilities)
+table(is.na(df.combined$Utilities))
+##Only 1 House does not have public ultilities(in training set), therefore variable is useless for prediction
+kable(df.combined[is.na(df.combined$Utilities) | df.combined$Utilities == 'NoSeWa', 1:9])
+df.combined$Utilities <- NULL
+```
+
+```{r}
+##Imputing Home Functionality Values
+unique(df.combined$Functional)
+table(is.na(df.combined$Functional))
+##Impute mode of Functional Values
+df.combined$Functional[is.na(df.combined$Functional)] <- names(sort(-table(df.combined$Functional)))[1]
+##Functional Levels Vector
+Functional <- c('Sal' = 0, 'Sev' = 1, 'Maj2' = 2, 'Maj1' = 3, 'Mod' = 4, 'Min2' = 5, 'Min1' = 6, 'Typ' = 7)
+
+df.combined$Functional <- as.integer(revalue(df.combined$Functional, Functional))
+table(df.combined$Functional)
+sum(table(df.combined$Functional))
+```
+
+```{r}
+##Imputing Exterior Values
+unique(df.combined$Exterior1st)
+table(is.na(df.combined$Exterior1st))
+
+##Imputing Mode of Exterior1st Values
+df.combined$Exterior1st[is.na(df.combined$Exterior1st)] <- names(sort(-table(df.combined$Exterior1st)))[1]
+df.combined$Exterior1st <- as.factor(df.combined$Exterior1st)
+table(df.combined$Exterior1st)
+sum(table(df.combined$Exterior1st))
+
+##Imputing Exterior2nd Values
+unique(df.combined$Exterior2nd)
+table(is.na(df.combined$Exterior2nd))
+
+##Imputing Mode of Exterior1st Values
+df.combined$Exterior2nd[is.na(df.combined$Exterior2nd)] <- names(sort(-table(df.combined$Exterior2nd)))[1]
+df.combined$Exterior2nd <- as.factor(df.combined$Exterior2nd)
+table(df.combined$Exterior2nd)
+sum(table(df.combined$Exterior2nd))
+
+##Imputing ExterQual Values
+unique(df.combined$ExterQual)
+table(is.na(df.combined$ExterQual))
+
+##Imputing Quality Levels Vector
+df.combined$ExterQual <- as.integer(revalue(df.combined$ExterQual, Qualities))
+table(df.combined$ExterQual)
+sum(table(df.combined$ExterQual))
+
+##Imputing ExterCond Values
+unique(df.combined$ExterCond)
+table(is.na(df.combined$ExterCond))
+
+##Imputing Quality Levels Vector
+df.combined$ExterCond <- as.integer(revalue(df.combined$ExterCond, Qualities))
+table(df.combined$ExterCond)
+sum(table(df.combined$ExterCond))
+```
+
+```{r}
+##Imputing Electrical System Values
+unique(df.combined$Electrical)
+table(is.na(df.combined$Electrical))
+
+##Imputing Mode of Electrical Values
+df.combined$Electrical[is.na(df.combined$Electrical)] <- names(sort(-table(df.combined$Electrical)))[1]
+df.combined$Electrical <- as.factor(df.combined$Electrical)
+table(df.combined$Electrical)
+sum(table(df.combined$Electrical))
+```
+
+```{r}
+##Imputing Missing Sale Type & Condition Values
+unique(df.combined$SaleType)
+table(is.na(df.combined$SaleType))
+
+##Imputing Mode of SaleType Values
+df.combined$SaleType[is.na(df.combined$SaleType)] <- names(sort(-table(df.combined$SaleType)))[1]
+df.combined$SaleType <- as.factor(df.combined$SaleType)
+table(df.combined$SaleType)
+sum(table(df.combined$SaleType))
+
+##Imputing SaleCondition Values
+unique(df.combined$SaleCondition)
+table(is.na(df.combined$SaleCondition))
+
+df.combined$SaleCondition <- as.factor(df.combined$SaleCondition)
+table(df.combined$SaleCondition)
+sum(table(df.combined$SaleCondition))
+```
+
+```{r}
+##Impute Pavement of Street & Driveway Values
+unique(df.combined$Street)
+table(is.na(df.combined$Street))
+
+##Street Levels Vector
+StreetLevels <- c('Grvl' = 0, 'Pave' = 1)
+
+df.combined$Street <- as.integer(revalue(df.combined$Street, StreetLevels))
+table(df.combined$Street)
+sum(table(df.combined$Street))
+
+##Impute PavedDrive Values
+unique(df.combined$PavedDrive)
+table(is.na(df.combined$PavedDrive))
+
+##PavedDrive Levels Vector
+PavedDrive <- c('N' = 0, 'P' = 1, 'Y' = 2)
+
+df.combined$PavedDrive <- as.integer(revalue(df.combined$PavedDrive, PavedDrive))
+table(df.combined$PavedDrive)
+sum(table(df.combined$PavedDrive))
+```
+
+```{r}
+##Factorizing remaining Categoric Variables that are without NA's
+character.VarNames <- names(df.combined[, sapply(df.combined, is.character)])
+character.VarNames
+cat(length(character.VarNames), 'remaining variables with character values')
+```
+
+```{r}
+##Factorize Foundation Values
+unique(df.combined$Foundation)
+table(is.na(df.combined$Foundation))
+
+df.combined$Foundation <- as.factor(df.combined$Foundation)
+table(df.combined$Foundation)
+sum(table(df.combined$Foundation))
+```
+
+```{r}
+##Factorize Heating & Air Values
+unique(df.combined$Heating)
+table(is.na(df.combined$Heating))
+
+df.combined$Heating <- as.factor(df.combined$Heating)
+table(df.combined$Heating)
+sum(table(df.combined$Heating))
+
+##Ordinalize Heating QC Values
+unique(df.combined$HeatingQC)
+table(is.na(df.combined$HeatingQC))
+
+df.combined$HeatingQC <- as.integer(revalue(df.combined$HeatingQC, Qualities))
+table(df.combined$HeatingQC)
+sum(table(df.combined$HeatingQC))
+
+##Factorize CentralAir Values
+unique(df.combined$CentralAir)
+table(is.na(df.combined$CentralAir))
+
+df.combined$CentralAir <- as.integer(revalue(df.combined$CentralAir, c('N' = 0, 'Y' = 1)))
+table(df.combined$CentralAir)
+sum(table(df.combined$CentralAir))
+```
+
+```{r}
+##Factorize Roof Values
+unique(df.combined$RoofStyle)
+table(is.na(df.combined$RoofStyle))
+
+df.combined$RoofStyle <- as.factor(df.combined$RoofStyle)
+table(df.combined$RoofStyle)
+sum(table(df.combined$RoofStyle))
+
+##Factorize RoofMatl
+unique(df.combined$RoofMatl)
+table(is.na(df.combined$RoofMatl))
+
+df.combined$RoofMatl <- as.factor(df.combined$RoofMatl)
+table(df.combined$RoofMatl)
+sum(table(df.combined$RoofMatl))
+```
+
+```{r}
+##Factorize Land Values
+unique(df.combined$LandContour)
+table(is.na(df.combined$LandContour))
+
+df.combined$LandContour <- as.factor(df.combined$LandContour)
+table(df.combined$LandContour)
+sum(table(df.combined$LandContour))
+
+##Label Encode LandSlope Values
+unique(df.combined$LandSlope)
+table(is.na(df.combined$LandSlope))
+
+##LandSlope Levels Vector
+LandSlope <- c('Sev' = 0, 'Mod' = 1, 'Gtl' = 2)
+
+df.combined$LandSlope <- as.integer(revalue(df.combined$LandSlope, LandSlope))
+table(df.combined$LandSlope)
+sum(table(df.combined$LandSlope))
+```
+
+```{r}
+##Factorize Dwelling Values
+unique(df.combined$BldgType)
+table(is.na(df.combined$BldgType))
+
+df.combined$BldgType <- as.factor(df.combined$BldgType)
+table(df.combined$BldgType)
+sum(table(df.combined$BldgType))
+
+##Factorize HouseStyle Values
+unique(df.combined$HouseStyle)
+table(is.na(df.combined$HouseStyle))
+
+df.combined$HouseStyle <- as.factor(df.combined$HouseStyle)
+table(df.combined$HouseStyle)
+sum(table(df.combined$HouseStyle))
+```
+
+```{r}
+##Factorize Neighborhood & Condition Values
+unique(df.combined$Neighborhood)
+table(is.na(df.combined$Neighborhood))
+
+df.combined$Neighborhood <- as.factor(df.combined$Neighborhood)
+table(df.combined$Neighborhood)
+sum(table(df.combined$Neighborhood))
+
+##Factorize Condition1 Values
+unique(df.combined$Condition1)
+table(is.na(df.combined$Condition1))
+
+df.combined$Condition1 <- as.factor(df.combined$Condition1)
+table(df.combined$Condition1)
+sum(table(df.combined$Condition1))
+
+##Factorize Condition2 Values
+unique(df.combined$Condition2)
+table(is.na(df.combined$Condition2))
+
+df.combined$Condition2 <- as.factor(df.combined$Condition2)
+table(df.combined$Condition2)
+sum(table(df.combined$Condition2))
+```
+
+```{r}
+str(df.combined$YrSold)
+##Factorize MoSold
+str(df.combined$MoSold)
+df.combined$MoSold <- as.factor(df.combined$MoSold)
+```
+
+```{r}
+##SalePrice vs. YrSold EDA (Dashed line is median SalePrice)
+year.sold <- ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = as.factor(YrSold), y = SalePrice)) +
+                geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+                scale_y_continuous(breaks = seq(0, 800000, by = 25000), labels = scales::comma) +
+                geom_label(stat = "count", aes(label = ..count.., y = ..count..)) +
+                coord_cartesian(ylim = c(0, 200000)) +
+                geom_hline(yintercept = 163000, linetype = "dashed", color = "red")
+
+##SalePrice vs. MoSold EDA (Dashed line is median SalePrice)
+month.sold <- ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = as.factor(MoSold), y = SalePrice)) +
+                geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+                scale_y_continuous(breaks = seq(0, 800000, by = 25000), labels = scales::comma) +
+                geom_label(stat = "count", aes(label = ..count.., y = ..count..)) +
+                coord_cartesian(ylim = c(0, 200000)) +
+                geom_hline(yintercept = 163000, linetype = "dashed", color = "red")
+
+grid.arrange(year.sold, month.sold, widths=c(1,2))
+```
+
+```{r}
+##Factorize MSSUbClass
+str(df.combined$MSSubClass)
+df.combined$MSSubClass <- as.factor(df.combined$MSSubClass)
+
+##MSSubClass Levels Vector
+MSSubClass <- c('20' = '1 Story 1946+', '30' = '1 Story 1945-', '40' = '1 Story Fin Attic All', '45' = '1.5 Story Unf All', '50' = '1.5 Story Fin All', '60' = '2 Story 1946+', '70' = '2 Story 1945-', '75' = '2.5 Story All', '80' = 'Split/Multi Level', '85' = 'Split Foyer', '90' = 'Duplex All Style/Age', '120' = '1 Story PUD 1946+', '150' = '1.5 Story PUD All', '160' = '2 Story PUD 1946+', '180' = 'PUD Multilevel', '190' = '2 Family Conversion')
+
+##Revalue for Ease
+df.combined$MSSubClass<- revalue(df.combined$MSSubClass, MSSubClass)
+```
+
+```{r}
+##Level Set after Data Clean & Imputation
+numeric.Vars <- which(sapply(df.combined, is.numeric))
+categoric.Vars <- which(sapply(df.combined, is.factor))
+
+cat(length(numeric.Vars), 'numeric variables &', length(categoric.Vars), 'categoric variables')
+
+str(df.combined)
+```
+
+```{r}
+##Level Set High Correlations
+df.numeric.Vars <- df.combined[, numeric.Vars]
+correlation.numeric.Vars <- cor(df.numeric.Vars, use = "pairwise.complete.obs")
+correlation.sorted <- as.matrix(sort(correlation.numeric.Vars[, 'SalePrice'], decreasing = TRUE))
+
+correlation.high <- names(which(apply(correlation.sorted, 1, function(x) abs(x) > 0.5)))
+correlation.numeric.Vars <- correlation.numeric.Vars[correlation.high, correlation.high]
+
+corrplot.mixed(correlation.numeric.Vars, tl.col = "black", tl.pos = "lt", tl.cex = 0.7, cl.cex = 0.7, number.cex = 0.7)
+```
+
+```{r}
+##Quick RandomForest to Identify Most Important Variables(Numeric & Categorical)
+set.seed(2018)
+RandomForest.draft <- randomForest(x = df.combined[1:1460, -79], y = df.combined$SalePrice[1:1460], ntree = 100, importance = TRUE)
+RandomForest.important <- importance(RandomForest.draft)
+df.important <- data.frame(Variables = row.names(RandomForest.important), MSE = RandomForest.important[, 1])
+df.important <- df.important[order(df.important$MSE, decreasing = TRUE),]
+
+##Visualize Quick RandomForest (df.important)
+ggplot(df.important[1:30,], aes(x = reorder(Variables, MSE), y = MSE, fill = MSE)) +
+          geom_bar(stat = 'identity') +
+          labs(x = 'Variables', y = '% Increase') +
+          coord_flip() +
+          theme(legend.position = "none")
+```
+
+```{r}
+##EDA of GrLivArea & Surface Related Variables
+s1 <- ggplot(data = df.combined, aes(x = GrLivArea)) +
+        geom_density() + labs(x = 'SqFt Living Area')
+s2 <- ggplot(data = df.combined, aes(x = as.factor(TotRmsAbvGrd))) +
+        geom_histogram(stat = 'count') + labs(x = 'Rooms above Ground')
+s3 <- ggplot(data = df.combined, aes(x = X1stFlrSF)) +
+        geom_density() + labs(x = 'SqFt 1st Floor')
+s4 <- ggplot(data = df.combined, aes(x = X2ndFlrSF)) +
+        geom_density() + labs(x='SqFt 2nd floor')
+s5 <- ggplot(data = df.combined, aes(x = TotalBsmtSF)) +
+        geom_density() + labs(x = 'SqFt Basement')
+s6 <- ggplot(data = df.combined[df.combined$LotArea < 100000,], aes(x=LotArea)) +
+        geom_density() + labs(x = 'SqFt Lot')
+s7 <- ggplot(data = df.combined, aes(x=LotFrontage)) +
+        geom_density() + labs(x = 'Linear Ft Lot Frontage')
+s8 <- ggplot(data = df.combined, aes(x = LowQualFinSF)) +
+        geom_histogram() + labs(x = 'Low Quality SqFt 1st & 2nd')
+
+d.layout <- matrix(c(1, 2, 5, 3, 4, 8, 6, 7), 4, 2, byrow=TRUE)
+multiplot(s1, s2, s3, s4, s5, s6, s7, s8, layout = d.layout)
+
+##Investigating Correlation between GrLivArea to X1stFlrSF, X2ndFlrSF & LowQualFinSF
+cor(df.combined$GrLivArea, (df.combined$X1stFlrSF + df.combined$X2ndFlrSF + df.combined$LowQualFinSF))
+head(df.combined[df.combined$LowQualFinSF > 0, c('GrLivArea', 'X1stFlrSF', 'X2ndFlrSF', 'LowQualFinSF')])
+```
+
+```{r}
+##EDA of Neighborhood Variable
+n1 <-ggplot(df.combined[!is.na(df.combined$SalePrice), ], aes(x = Neighborhood, y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 50000), labels = scales::comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size  = 3) +
+        geom_hline(yintercept = 163000, linetype = "dashed", color = "red")
+
+n2 <- ggplot(data = df.combined, aes(x = Neighborhood)) +
+        geom_histogram(stat = 'count') +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(n1, n2)
+```
+
+```{r}
+##EDA of OverallQuall & Quality Variables
+q1 <- ggplot(data = df.combined, aes(x = as.factor(OverallQual))) +
+        geom_histogram(stat = 'count')
+q2 <- ggplot(data = df.combined, aes(x=as.factor(ExterQual))) +
+        geom_histogram(stat='count')
+q3 <- ggplot(data = df.combined, aes(x=as.factor(BsmtQual))) +
+        geom_histogram(stat='count')
+q4 <- ggplot(data = df.combined, aes(x=as.factor(KitchenQual))) +
+        geom_histogram(stat='count')
+q5 <- ggplot(data = df.combined, aes(x=as.factor(GarageQual))) +
+        geom_histogram(stat='count')
+q6 <- ggplot(data = df.combined, aes(x=as.factor(FireplaceQu))) +
+        geom_histogram(stat='count')
+q7 <- ggplot(data = df.combined, aes(x=as.factor(PoolQC))) +
+        geom_histogram(stat='count')
+
+layout <- matrix(c(1,2,8,3,4,8,5,6,7),3,3,byrow=TRUE)
+multiplot(q1, q2, q3, q4, q5, q6, q7, layout=layout)
+```
+
+```{r}
+##EDA of MSSubCLass
+ms1 <- ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = MSSubClass, y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by=50000), labels = comma) +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        geom_hline(yintercept = 163000, linetype = "dashed", color = "red") 
+
+ms2 <- ggplot(data = df.combined, aes(x = MSSubClass)) +
+        geom_histogram(stat = 'count') +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(ms1, ms2)
+```
+
+```{r}
+##EDA of Garage Variables
+g1 <- ggplot(data = df.combined[df.combined$GarageCars !=0,], aes(x = GarageYrBlt)) + 
+        geom_histogram() + 
+        xlim(1890, 2015)
+g2 <- ggplot(data = df.combined, aes(x = as.factor(GarageCars))) +
+        geom_histogram(stat = 'count')
+g3 <- ggplot(data = df.combined, aes(x = GarageArea)) +
+        geom_density()
+g4 <- ggplot(data = df.combined, aes(x = as.factor(GarageCond))) +
+        geom_histogram(stat = 'count')
+g5 <- ggplot(data = df.combined, aes(x = GarageType)) +
+        geom_histogram(stat = 'count')
+g6 <- ggplot(data = df.combined, aes(x = as.factor(GarageQual))) +
+        geom_histogram(stat = 'count')
+g7 <- ggplot(data = df.combined, aes(x = as.factor(GarageFinish))) +
+        geom_histogram(stat = 'count')
+
+layout <- matrix(c(1, 5, 5, 2, 3, 8, 6, 4, 7), 3 , 3, byrow = TRUE)
+multiplot(g1, g2, g3, g4, g5, g6, g7, layout = layout)
+```
+
+```{r}
+##EDA of Basement Variables
+b1 <- ggplot(data = df.combined, aes(BsmtFinSF1)) + 
+        geom_histogram() +
+        labs(x = 'Type 1 Finished SqFt')
+b2 <- ggplot(data = df.combined, aes(x = BsmtFinSF2)) +
+        geom_histogram() +
+        labs(x = 'Type 2 Finished SqFt')
+b3 <- ggplot(data = df.combined, aes(x = BsmtUnfSF)) + 
+        geom_histogram() + 
+        labs(x = 'Unfinished SqFt')
+b4 <- ggplot(data = df.combined, aes(x = as.factor(BsmtFinType1))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Type 1 Finished Area Rating')
+b5 <- ggplot(data = df.combined, aes(x = as.factor(BsmtFinType2))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Type 2 Finished Area Rating')
+b6 <- ggplot(data = df.combined, aes(x = as.factor(BsmtQual))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Height of Bsmt')
+b7 <- ggplot(data = df.combined, aes(x = as.factor(BsmtCond))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Bsmt Condition Rating')
+b8 <- ggplot(data = df.combined, aes(x = as.factor(BsmtExposure))) +
+        geom_histogram(stat = 'count') +
+        labs(x = 'Walkout/Garden Level Walls')
+
+layout <- matrix(c(1, 2, 3, 4, 5, 9, 6, 7, 8), 3, 3, byrow = TRUE)
+multiplot(b1, b2, b3, b4, b5, b6, b7, b8, layout = layout)
+```
+
+```{r}
+##Feature Engineering
+
+##Total Bathrooms
+df.combined$TotalBath <- df.combined$FullBath + (df.combined$HalfBath*0.5) + df.combined$BsmtFullBath + (df.combined$BsmtHalfBath*0.5)
+
+tb1 <- ggplot(data = df.combined[!is.na(df.combined$SalePrice), ], aes(x = as.factor(TotalBath), y = SalePrice)) +
+        geom_point(col = 'blue') + geom_smooth(method = "lm", se = FALSE, color = "black", aes(group = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = comma)
+
+tb2 <- ggplot(data = df.combined, aes(x = as.factor(TotalBath))) +
+        geom_histogram(stat = 'count')
+
+grid.arrange(tb1, tb2)
+```
+
+```{r}
+##Age, Remodel & New Variables
+df.combined$Remod <- ifelse(df.combined$YearBuilt == df.combined$YearRemodAdd, 0, 1) ## 0 = NA Remodel, 1 = Remodel
+df.combined$Age <- as.numeric(df.combined$YrSold) - df.combined$YearRemodAdd
+
+ggplot(data = df.combined[!is.na(df.combined$SalePrice), ], aes(x = Age, y = SalePrice)) +
+        geom_point(col = 'blue') +
+        geom_smooth(method = "lm", se = FALSE, color = "black", aes(group = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 100000), labels = comma)
+
+cor(df.combined$SalePrice[!is.na(df.combined$SalePrice)], df.combined$Age[!is.na(df.combined$SalePrice)])
+
+ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = as.factor(Remod), y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 6) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 50000), labels = comma) +
+        theme_grey(base_size = 18) +
+        geom_hline(yintercept = 163000, linetype = "dashed")
+
+df.combined$New <- ifelse(df.combined$YrSold == df.combined$YearBuilt, 1, 0) ##1 = New, 0 = Not New
+table(df.combined$New)
+
+##Factorize YrSold
+df.combined$YrSold <- as.factor(df.combined$YrSold)
+```
+
+```{r}
+##Binning Neighborhoods
+nb1 <- ggplot(df.combined[!is.na(df.combined$SalePrice), ], aes(x = reorder(Neighborhood, SalePrice, FUN = median), y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') + 
+        labs(x = 'Neighborhood', y = 'Median SalePrice') +
+        theme(axis.text.x = element_text(angle = 45, hjust =1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 50000), labels = comma) + 
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        geom_hline(yintercept = 163000, linetype = "dashed", color = "red")
+
+nb2 <- ggplot(df.combined[!is.na(df.combined$SalePrice), ], aes(x = reorder(Neighborhood, SalePrice, FUN = mean), y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "mean", fill = 'blue') + 
+        labs(x = 'Neighborhood', y = 'Mean SalePrice') +
+        theme(axis.text.x = element_text(angle = 45, hjust =1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 50000), labels = comma) + 
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 3) +
+        geom_hline(yintercept = 163000, linetype = "dashed", color = "red")
+
+grid.arrange(nb1, nb2)
+
+##Categorizing Neighborhood Wealth (Poor - 0, Middle - 1, Wealthy - 2)
+df.combined$NeighborhoodWealth[df.combined$Neighborhood %in% c('StoneBr', 'NridgHt', 'NoRidge')] <- 2
+df.combined$NeighborhoodWealth[!df.combined$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale', 'StoneBr', 'NridgHt', 'NoRidge')] <- 1
+df.combined$NeighborhoodWealth[df.combined$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale')] <- 0
+table(df.combined$NeighborhoodWealth)
+sum(table(df.combined$NeighborhoodWealth))
+```
+
+```{r}
+## Total SqFt
+df.combined$TotalSqFt <- df.combined$GrLivArea + df.combined$TotalBsmtSF
+
+cor(df.combined$SalePrice, df.combined$TotalSqFt, use = "pairwise.complete.obs")
+```
+
+```{r}
+##Porch Variables
+df.combined$TotalPorchSqFt <- df.combined$OpenPorchSF + df.combined$EnclosedPorch + df.combined$X3SsnPorch + df.combined$ScreenPorch
+
+cor(df.combined$SalePrice, df.combined$TotalPorchSqFt, use = "pairwise.complete.obs")
+```
+
+```{r}
+##Data Prep for Modeling
+
+##Remove Highly Correlated Variables
+rmVars <- c('YearRemodAdd', 'GarageYrBlt', 'GarageArea', 'GarageCond', 'TotalBsmtSF', 'TotRmsAbvGrd')
+
+df.combined <- df.combined[, !(names(df.combined) %in% rmVars)]
+
+##Remove Outliers
+df.combined <- df.combined[-c(524, 1299),]
+```
+
+```{r}
+##Prepping Predictor Variables
+
+numeric.VarNames <- numeric.VarNames[!(numeric.VarNames %in% c('MSSubClass', 'MoSold', 'YrSold', 'SalePrice', 'OverallQual', 'OverallCond'))]
+numeric.VarNames <- append(numeric.VarNames, c('Age', 'TotalPorchSqFt', 'TotalBath', 'TotalSqFt'))
+
+df.numeric <- df.combined[, names(df.combined) %in% numeric.VarNames]
+str(df.numeric)
+df.categoric <- df.combined[, !(names(df.combined) %in% numeric.VarNames)]
+df.categoric <- df.categoric[, names(df.categoric) != 'SalePrice']
+str(df.categoric)
+
+cat(length(df.numeric), 'numeric variables &', length(df.categoric), 'categoric variables')
+```
+
+```{r}
+##Skewness of Numeric Variables
+for(i in 1:ncol(df.numeric)){
+        if(abs(skew(df.numeric[,i])) > 0.8){
+              df.numeric[,i] <- log(df.numeric[,i] + 1)
+        }
+}
+
+##Normalization of Numeric Variables
+Predictor.Vars <- preProcess(df.numeric, method = c("center", "scale"))
+print(Predictor.Vars)
+
+df.normal <- predict(Predictor.Vars, df.numeric)
+dim(df.normal)
+
+##Encoding of Categoric Varibles
+df.dummy <- as.data.frame(model.matrix(~.-1, df.categoric))
+dim(df.dummy)
+```
+
+```{r}
+##Removing Levels with Few/None Values
+
+##Absent Values in Test Set
+Values.Absent.Test <- which(colSums(df.dummy[1459:2917, ]) == 0)
+colnames(df.dummy[Values.Absent.Test])
+
+##Removing Predictor Values
+df.dummy <- df.dummy[, -Values.Absent.Test]
+
+##Absent Values in Train Set
+Values.Absent.Train <- which(colSums(df.dummy[1:1458, ]) == 0)
+colnames(df.dummy[Values.Absent.Train])
+
+##Removing Predictor Values
+df.dummy <- df.dummy[, -Values.Absent.Train]
+
+##Few Values (<10) in Train Set
+Values.Few.Train <- which(colSums(df.dummy[1:1458, ]) <10)
+colnames(df.dummy[Values.Few.Train])
+
+##Removing Predictor Values
+df.dummy <- df.dummy[, -Values.Few.Train]
+dim(df.dummy)
+
+##Combine Predictors into Data Frame 
+df.combined.predictors <- cbind(df.normal, df.dummy)
+```
+
+```{r}
+##Verifying Skewness of Response Variable (SalePrice)
+skew(df.combined$SalePrice)
+
+qqnorm(df.combined$SalePrice)
+qqline(df.combined$SalePrice)
+
+##Normally Distribute SalePrice
+df.combined$SalePrice <- log(df.combined$SalePrice)
+
+##Verifying Skewness of Normalized Response Variable (SalePrice)
+skew(df.combined$SalePrice)
+
+qqnorm(df.combined$SalePrice)
+qqline(df.combined$SalePrice)
+```
+
+```{r}
+##Saving Train & Test Sets
+train.set <- df.combined.predictors[!is.na(df.combined$SalePrice), ]
+str(train.set)
+View(train.set)
+test.set <- df.combined.predictors[is.na(df.combined$SalePrice), ]
+str(test.set)
+View(test.set)
+
+```
+
+```{r}
+##Lasso Regresion Model
+set.seed(12345)
+Control.Train <-trainControl(method = "cv", number = 5)
+Grid.Lasso <- expand.grid(alpha = 1, lambda = seq(0.001, 0.1, by = 0.0005))
+
+Model.Lasso <- train(x = train.set, y = df.combined$SalePrice[!is.na(df.combined$SalePrice)], method = 'glmnet', trControl= Control.Train, tuneGrid = Grid.Lasso)
+Model.Lasso$bestTune
+
+min(Model.Lasso$results$RMSE)
+
+Vars.Important.Lasso <- varImp(Model.Lasso, scale = F)
+Importance.Lasso <- Vars.Important.Lasso$importance
+
+Vars.Selected.Lasso <- length(which(Importance.Lasso$Overall!= 0))
+Vars.NotSelected.Lasso <- length(which(Importance.Lasso$Overall == 0))
+
+cat('Lasso Model used', Vars.Selected.Lasso, 'variables & did not use', Vars.NotSelected.Lasso)
+
+Prediction.Lasso <- predict(Model.Lasso, test.set)
+Prediction.Values.Lasso <- exp(Prediction.Lasso)
+
+View(Prediction.Values.Lasso)
+summary(Prediction.Values.Lasso)
+```
+
+```{r}
+##XGBoost Modeling
+XGB_Grid <- expand.grid(
+  nrounds = 1000,
+  eta = c(0.1, 0.05, 0.01),
+  max_depth = c(2, 3, 4, 5, 6),
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = c(1, 2, 3, 4, 5),
+  subsample = 1
+)
+
+##Find Best Hyperparameter Values
+XGB_Caret <- train(x = train.set, y = df.combined$SalePrice[!is.na(df.combined$SalePrice)], method = 'xgbTree', trControl = Control.Train, tuneGrid = XGB_Grid)
+XGB_Caret$bestTune
+```
+
+
+
+
+
+```{r}
+##Linear Regression Modeling 
+train.set.lm <- df.combined.predictors[!is.na(df.combined$SalePrice), ]
+test.set.lm <- df.combined.predictors[is.na(df.combined$SalePrice),] 
+Features.Lm <- names(df.combined.predictors)
+Features.Lm <- paste("x", 1:182, sep = "")
+Formula <- as.formula(paste("df.combined$SalePrice ~", paste(Features.Lm, collapse = "+")))
+
+Model.Lm <- lm(formula, data = df.combined.predictors)
+
+Model.Lm <- lm(df.combined$SalePrice ~ GrLivArea + Neighborhood + OverallQual + MSSubClass + BsmtFinType1 + GarageType + ExterQual + FireplaceQu + Exterior2nd + GarageFinish + CentralAir, data = train.set.lm)
+summary(model.lm)
+
+```
+
