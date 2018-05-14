@@ -1072,7 +1072,6 @@ View(train.set)
 test.set <- df.combined.predictors[is.na(df.combined$SalePrice), ]
 str(test.set)
 View(test.set)
-
 ```
 
 ```{r}

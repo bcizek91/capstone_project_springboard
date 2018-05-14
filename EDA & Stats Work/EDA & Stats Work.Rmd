@@ -1,13 +1,7 @@
 ---
 title: "EDA & Stats Work"
-output:
-  pdf_document: default
-  html_document: default
+output: html_notebook
 ---
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
 ```{r}
 ##Level Set High Correlations
@@ -171,3 +165,4 @@ b8 <- ggplot(data = df.combined, aes(x = as.factor(BsmtExposure))) +
 layout <- matrix(c(1, 2, 3, 4, 5, 9, 6, 7, 8), 3, 3, byrow = TRUE)
 multiplot(b1, b2, b3, b4, b5, b6, b7, b8, layout = layout)
 ```
+

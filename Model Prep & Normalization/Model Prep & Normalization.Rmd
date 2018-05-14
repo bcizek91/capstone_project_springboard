@@ -1,0 +1,107 @@
+---
+title: "Model Prep & Normalization"
+output: html_notebook
+---
+
+```{r}
+##Data Prep for Modeling
+
+##Remove Highly Correlated Variables
+rmVars <- c('YearRemodAdd', 'GarageYrBlt', 'GarageArea', 'GarageCond', 'TotalBsmtSF', 'TotRmsAbvGrd')
+
+df.combined <- df.combined[, !(names(df.combined) %in% rmVars)]
+
+##Remove Outliers
+df.combined <- df.combined[-c(524, 1299),]
+```
+
+```{r}
+##Prepping Predictor Variables
+
+numeric.VarNames <- numeric.VarNames[!(numeric.VarNames %in% c('MSSubClass', 'MoSold', 'YrSold', 'SalePrice', 'OverallQual', 'OverallCond'))]
+numeric.VarNames <- append(numeric.VarNames, c('Age', 'TotalPorchSqFt', 'TotalBath', 'TotalSqFt'))
+
+df.numeric <- df.combined[, names(df.combined) %in% numeric.VarNames]
+str(df.numeric)
+df.categoric <- df.combined[, !(names(df.combined) %in% numeric.VarNames)]
+df.categoric <- df.categoric[, names(df.categoric) != 'SalePrice']
+str(df.categoric)
+
+cat(length(df.numeric), 'numeric variables &', length(df.categoric), 'categoric variables')
+```
+
+```{r}
+##Skewness of Numeric Variables
+for(i in 1:ncol(df.numeric)){
+        if(abs(skew(df.numeric[,i])) > 0.8){
+              df.numeric[,i] <- log(df.numeric[,i] + 1)
+        }
+}
+
+##Normalization of Numeric Variables
+Predictor.Vars <- preProcess(df.numeric, method = c("center", "scale"))
+print(Predictor.Vars)
+
+df.normal <- predict(Predictor.Vars, df.numeric)
+dim(df.normal)
+
+##Encoding of Categoric Varibles
+df.dummy <- as.data.frame(model.matrix(~.-1, df.categoric))
+dim(df.dummy)
+```
+
+```{r}
+##Removing Levels with Few/None Values
+
+##Absent Values in Test Set
+Values.Absent.Test <- which(colSums(df.dummy[1459:2917, ]) == 0)
+colnames(df.dummy[Values.Absent.Test])
+
+##Removing Predictor Values
+df.dummy <- df.dummy[, -Values.Absent.Test]
+
+##Absent Values in Train Set
+Values.Absent.Train <- which(colSums(df.dummy[1:1458, ]) == 0)
+colnames(df.dummy[Values.Absent.Train])
+
+##Removing Predictor Values
+df.dummy <- df.dummy[, -Values.Absent.Train]
+
+##Few Values (<10) in Train Set
+Values.Few.Train <- which(colSums(df.dummy[1:1458, ]) <10)
+colnames(df.dummy[Values.Few.Train])
+
+##Removing Predictor Values
+df.dummy <- df.dummy[, -Values.Few.Train]
+dim(df.dummy)
+
+##Combine Predictors into Data Frame 
+df.combined.predictors <- cbind(df.normal, df.dummy)
+```
+
+```{r}
+##Verifying Skewness of Response Variable (SalePrice)
+skew(df.combined$SalePrice)
+
+qqnorm(df.combined$SalePrice)
+qqline(df.combined$SalePrice)
+
+##Normally Distribute SalePrice
+df.combined$SalePrice <- log(df.combined$SalePrice)
+
+##Verifying Skewness of Normalized Response Variable (SalePrice)
+skew(df.combined$SalePrice)
+
+qqnorm(df.combined$SalePrice)
+qqline(df.combined$SalePrice)
+```
+
+```{r}
+##Saving Train & Test Sets
+train.set <- df.combined.predictors[!is.na(df.combined$SalePrice), ]
+str(train.set)
+View(train.set)
+test.set <- df.combined.predictors[is.na(df.combined$SalePrice), ]
+str(test.set)
+View(test.set)
+```
