@@ -1,0 +1,3 @@
+"0","numeric.features <- names(which(sapply(df.combined, is.numeric)))"
+"0","categoric.features <- names(which(sapply(df.combined, is.character)))"
+"0","df.numeric <- df.combined[numeric.features]"

@@ -1,0 +1,2 @@
+"0","bsmt.finish.list <- c('None' = 0, 'Unf' = 1, 'LwQ' = 2,'Rec'= 3, 'BLQ' = 4, 'ALQ' = 5, 'GLQ' = 6)"
+"0","df.numeric <- map.category(c('BsmtFinType1', 'BsmtFinType2'), bsmt.finish.list, df.numeric)"

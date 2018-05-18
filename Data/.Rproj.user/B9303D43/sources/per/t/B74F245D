@@ -1,0 +1,24 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1524517226308.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "2297224602",
+    "id" : "B74F245D",
+    "lastKnownWriteTime" : 1524517274,
+    "last_content_update" : 1524517568979,
+    "path" : "C:/Users/cizek/OneDrive - F5 Networks/Data Science/GitHub/capstone_project_springboard/Capstone_Project_2.Rmd",
+    "project_path" : null,
+    "properties" : {
+        "chunk_output_type" : "inline",
+        "cursorPosition" : "7,15",
+        "scrollLine" : "0",
+        "tempName" : "Untitled2"
+    },
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

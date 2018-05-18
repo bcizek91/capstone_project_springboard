@@ -1,0 +1,2 @@
+"0","group.df <- df.combined[1:1460,]"
+"0","group.df$SalesPrice <- train$SalePrice"

@@ -1,0 +1,9 @@
+---
+title: "Capstone Project 2.0"
+output: html_notebook
+---
+
+```{r}
+plot(cars)
+```
+

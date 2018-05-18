@@ -1,0 +1,8 @@
+"0","quality.mean <- function(col) {"
+"0","  group.table <- df.combined[,c(col, 'OverallQual')] %>%"
+"0","    group_by_(col) %>%"
+"0","    summarise(mean.qual = mean(OverallQual)) %>%"
+"0","    arrange(mean.qual)"
+"0","  "
+"0","  return(data.frame(group.table))"
+"0","}"
