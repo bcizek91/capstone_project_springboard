@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "capstone_project"
 output: html_notebook
 ---
 
@@ -17,6 +17,7 @@ library(ggrepel)
 library(randomForest)
 library(psych)
 library(xgboost)
+library(Ckmeans.1d.dp)
 ```
 
 ```{r}
@@ -925,6 +926,13 @@ ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = as.factor(Remod), y 
 df.combined$New <- ifelse(df.combined$YrSold == df.combined$YearBuilt, 1, 0) ##1 = New, 0 = Not New
 table(df.combined$New)
 
+ggplot(df.combined[!is.na(df.combined$SalePrice),], aes(x = as.factor(New), y = SalePrice)) +
+        geom_bar(stat = 'summary', fun.y = "median", fill = 'blue') +
+        geom_label(stat = "count", aes(label = ..count.., y = ..count..), size = 6) +
+        scale_y_continuous(breaks = seq(0, 800000, by = 50000), labels = comma) +
+        theme_grey(base_size = 18) +
+        geom_hline(yintercept = 163000, linetype = "dashed") 
+
 ##Factorize YrSold
 df.combined$YrSold <- as.factor(df.combined$YrSold)
 ```
@@ -961,7 +969,14 @@ sum(table(df.combined$NeighborhoodWealth))
 ## Total SqFt
 df.combined$TotalSqFt <- df.combined$GrLivArea + df.combined$TotalBsmtSF
 
+ggplot(data = df.combined[!is.na(df.combined$SalePrice),], aes(x = TotalSqFt, y = SalePrice))+
+        geom_point(col = 'blue') + geom_smooth(method = "lm", se = FALSE, color = "black", aes(group = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by=100000), labels = comma) +
+        geom_text_repel(aes(label = ifelse(df.combined$GrLivArea[!is.na(df.combined$SalePrice)]>4500, rownames(df.combined), '')))
+
 cor(df.combined$SalePrice, df.combined$TotalSqFt, use = "pairwise.complete.obs")
+
+cor(df.combined$SalePrice[-c(524, 1299)], df.combined$TotalSqFt[-c(524, 1299)], use = "pairwise.complete.obs")
 ```
 
 ```{r}
@@ -969,6 +984,10 @@ cor(df.combined$SalePrice, df.combined$TotalSqFt, use = "pairwise.complete.obs")
 df.combined$TotalPorchSqFt <- df.combined$OpenPorchSF + df.combined$EnclosedPorch + df.combined$X3SsnPorch + df.combined$ScreenPorch
 
 cor(df.combined$SalePrice, df.combined$TotalPorchSqFt, use = "pairwise.complete.obs")
+
+ggplot(data = df.combined[!is.na(df.combined$SalePrice),], aes(x = TotalPorchSqFt, y = SalePrice))+
+        geom_point(col = 'blue') + geom_smooth(method = "lm", se = FALSE, color = "black", aes(group = 1)) +
+        scale_y_continuous(breaks = seq(0, 800000, by=100000), labels = comma)
 ```
 
 ```{r}
@@ -1076,7 +1095,7 @@ View(test.set)
 
 ```{r}
 ##Lasso Regresion Model
-set.seed(12345)
+set.seed(12345678)
 Control.Train <-trainControl(method = "cv", number = 5)
 Grid.Lasso <- expand.grid(alpha = 1, lambda = seq(0.001, 0.1, by = 0.0005))
 
@@ -1102,7 +1121,7 @@ summary(Prediction.Values.Lasso)
 
 ```{r}
 ##XGBoost Modeling
-XGB_Grid <- expand.grid(
+Grid.XGB <- expand.grid(
   nrounds = 1000,
   eta = c(0.1, 0.05, 0.01),
   max_depth = c(2, 3, 4, 5, 6),
@@ -1113,26 +1132,65 @@ XGB_Grid <- expand.grid(
 )
 
 ##Find Best Hyperparameter Values
-XGB_Caret <- train(x = train.set, y = df.combined$SalePrice[!is.na(df.combined$SalePrice)], method = 'xgbTree', trControl = Control.Train, tuneGrid = XGB_Grid)
-XGB_Caret$bestTune
+Caret.XGB <- train(x = train.set, y = df.combined$SalePrice[!is.na(df.combined$SalePrice)], method = 'xgbTree', trControl = Control.Train, tuneGrid = Grid.XGB)
+Caret.XGB$bestTune
+
+##XGB Boost Train & Test Sets
+Label.Train.XGB <- df.combined$SalePrice[!is.na(df.combined$SalePrice)]
+
+##XBG Train & Test Sets in Matrix
+Train.Matrix.XGB <- xgb.DMatrix(data = as.matrix(train.set), label = Label.Train.XGB)
+Test.Matrix.XGB <- xgb.DMatrix(data = as.matrix(test.set))
+
+##XGB Parameters
+Parameters.Model.XGB <- list(
+    objective = "reg:linear",
+    booster = "gbtree",
+    eta = 0.05,
+    gamma = 0,
+    max_depth = 3,
+    min_child_weight = 3,
+    subsample = 1,
+    colsample_bytree = 1
+)
+
+##XGB Cross Validation
+Cross.Validation.XGB <- xgb.cv(params = Parameters.Model.XGB, data = Train.Matrix.XGB, nrounds = 500, nfold = 5, showsd = T, stratified = T, print_every_n = 40, early_stopping_rounds = 10, maximize = F)
+
+##Train Model using Best Round from Cross Validation
+Model.XGB <- xgb.train(data = Train.Matrix.XGB, params = Parameters.Model.XGB, nrounds = 367)
+
+Prediction.XGB <- predict(Model.XGB, Test.Matrix.XGB)
+Prediction.Values.XGB <- exp(Prediction.XGB)
+
+head(Prediction.Values.XGB)
+View(Prediction.Values.XGB)
+summary(Prediction.Values.XGB)
+
 ```
-
-
-
-
 
 ```{r}
-##Linear Regression Modeling 
-train.set.lm <- df.combined.predictors[!is.na(df.combined$SalePrice), ]
-test.set.lm <- df.combined.predictors[is.na(df.combined$SalePrice),] 
-Features.Lm <- names(df.combined.predictors)
-Features.Lm <- paste("x", 1:182, sep = "")
-Formula <- as.formula(paste("df.combined$SalePrice ~", paste(Features.Lm, collapse = "+")))
+##KMeans Clustering identifying Importance of Variables
+install.packages("Ckmeans.1d.dp")
+library(Ckmeans.1d.dp)
 
-Model.Lm <- lm(formula, data = df.combined.predictors)
-
-Model.Lm <- lm(df.combined$SalePrice ~ GrLivArea + Neighborhood + OverallQual + MSSubClass + BsmtFinType1 + GarageType + ExterQual + FireplaceQu + Exterior2nd + GarageFinish + CentralAir, data = train.set.lm)
-summary(model.lm)
-
+Importance.XGB <- xgb.importance(feature_names = colnames(train.set), Model.XGB)
+xgb.ggplot.importance(importance_matrix = Importance.XGB[1:15], rel_to_first = TRUE)
 ```
+
+```{r}
+##Averaging Models
+Models.Average <- data.frame(Id = test.IDs, SalePrice = (Prediction.Values.XGB + Prediction.Values.Lasso)/2)
+
+head(Models.Average)
+View(Models.Average)
+summary(Models.Average$SalePrice)
+
+##Export Results
+write.csv(Models.Average, file = 'Capstone Results.csv', row.names = F)
+```
+
+
+
+
 

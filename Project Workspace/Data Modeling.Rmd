@@ -1,0 +1,119 @@
+---
+title: "Data Modeling"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r}
+library(knitr)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+library(Rmisc)
+library(ggrepel)
+library(randomForest)
+library(psych)
+library(xgboost)
+```
+
+```{r}
+##Lasso Regresion Model
+set.seed(12345678)
+Control.Train <-trainControl(method = "cv", number = 5)
+Grid.Lasso <- expand.grid(alpha = 1, lambda = seq(0.001, 0.1, by = 0.0005))
+
+Model.Lasso <- train(x = train.set, y = df.combined$SalePrice[!is.na(df.combined$SalePrice)], method = 'glmnet', trControl= Control.Train, tuneGrid = Grid.Lasso)
+Model.Lasso$bestTune
+
+min(Model.Lasso$results$RMSE)
+
+Vars.Important.Lasso <- varImp(Model.Lasso, scale = F)
+Importance.Lasso <- Vars.Important.Lasso$importance
+
+Vars.Selected.Lasso <- length(which(Importance.Lasso$Overall!= 0))
+Vars.NotSelected.Lasso <- length(which(Importance.Lasso$Overall == 0))
+
+cat('Lasso Model used', Vars.Selected.Lasso, 'variables & did not use', Vars.NotSelected.Lasso)
+
+Prediction.Lasso <- predict(Model.Lasso, test.set)
+Prediction.Values.Lasso <- exp(Prediction.Lasso)
+
+View(Prediction.Values.Lasso)
+summary(Prediction.Values.Lasso)
+```
+
+```{r}
+##XGBoost Modeling
+Grid.XGB <- expand.grid(
+  nrounds = 1000,
+  eta = c(0.1, 0.05, 0.01),
+  max_depth = c(2, 3, 4, 5, 6),
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = c(1, 2, 3, 4, 5),
+  subsample = 1
+)
+
+##Find Best Hyperparameter Values
+Caret.XGB <- train(x = train.set, y = df.combined$SalePrice[!is.na(df.combined$SalePrice)], method = 'xgbTree', trControl = Control.Train, tuneGrid = Grid.XGB)
+Caret.XGB$bestTune
+
+##XGB Boost Train & Test Sets
+Label.Train.XGB <- df.combined$SalePrice[!is.na(df.combined$SalePrice)]
+
+##XBG Train & Test Sets in Matrix
+Train.Matrix.XGB <- xgb.DMatrix(data = as.matrix(train.set), label = Label.Train.XGB)
+Test.Matrix.XGB <- xgb.DMatrix(data = as.matrix(test.set))
+
+##XGB Parameters
+Parameters.Model.XGB <- list(
+    objective = "reg:linear",
+    booster = "gbtree",
+    eta = 0.05,
+    gamma = 0,
+    max_depth = 3,
+    min_child_weight = 3,
+    subsample = 1,
+    colsample_bytree = 1
+)
+
+##XGB Cross Validation
+Cross.Validation.XGB <- xgb.cv(params = Parameters.Model.XGB, data = Train.Matrix.XGB, nrounds = 500, nfold = 5, showsd = T, stratified = T, print_every_n = 40, early_stopping_rounds = 10, maximize = F)
+
+##Train Model using Best Round from Cross Validation
+Model.XGB <- xgb.train(data = Train.Matrix.XGB, params = Parameters.Model.XGB, nrounds = 367)
+
+Prediction.XGB <- predict(Model.XGB, Test.Matrix.XGB)
+Prediction.Values.XGB <- exp(Prediction.XGB)
+
+head(Prediction.Values.XGB)
+View(Prediction.Values.XGB)
+summary(Prediction.Values.XGB)
+
+```
+
+```{r}
+##KMeans Clustering identifying Importance of Variables
+install.packages("Ckmeans.1d.dp")
+library(Ckmeans.1d.dp)
+
+Importance.XGB <- xgb.importance(feature_names = colnames(train.set), Model.XGB)
+xgb.ggplot.importance(importance_matrix = Importance.XGB[1:15], rel_to_first = TRUE)
+```
+
+```{r}
+##Averaging Models
+Models.Average <- data.frame(Id = test.IDs, SalePrice = (Prediction.Values.XGB + Prediction.Values.Lasso)/2)
+
+head(Models.Average)
+View(Models.Average)
+summary(Models.Average$SalePrice)
+
+##Export Results
+write.csv(Models.Average, file = 'Capstone Results.csv', row.names = F)
+```
